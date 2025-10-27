@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import csv
 from zoneinfo import ZoneInfo  # intégré à Python ≥3.9
+import os
 
 # Configuration de la page
 st.set_page_config(
@@ -697,7 +698,24 @@ def main():
     else:
         df_alerts = pd.DataFrame(st.session_state.alerts[:1000])  # Augmenté à 1000 alertes
         
-        df_alerts['timestamp'] = (pd.to_datetime(df_alerts['timestamp']).dt.tz_localize('UTC').dt.tz_convert('America/Toronto'))
+        # Détecter si le script tourne dans Streamlit Cloud
+        is_cloud = bool(os.environ.get("STREAMLIT_RUNTIME"))
+
+        # Conversion robuste en timezone de Toronto
+        df_alerts['timestamp'] = pd.to_datetime(df_alerts['timestamp'], errors='coerce')
+
+        if df_alerts['timestamp'].dt.tz is None:
+            # Si les timestamps n'ont pas de timezone :
+            if is_cloud:
+               # En cloud : l'heure est en UTC → convertir vers Toronto
+               df_alerts['timestamp'] = (df_alerts['timestamp'].dt.tz_localize('UTC').dt.tz_convert('America/Toronto'))
+            else:
+               # En local : on considère que l'heure est déjà locale (Toronto)
+               df_alerts['timestamp'] = df_alerts['timestamp'].dt.tz_localize('America/Toronto')
+        else:
+            # Si déjà tz-aware, on harmonise simplement vers Toronto
+            df_alerts['timestamp'] = df_alerts['timestamp'].dt.tz_convert('America/Toronto')
+        
         df_display = pd.DataFrame({
             'Heure': df_alerts['timestamp'].dt.strftime('%H:%M:%S'),
             'Ticker': df_alerts['ticker'],
