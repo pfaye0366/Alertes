@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta
 from collections import defaultdict
 import csv
+from zoneinfo import ZoneInfo  # intégré à Python ≥3.9
 
 # Configuration de la page
 st.set_page_config(
@@ -696,6 +697,7 @@ def main():
     else:
         df_alerts = pd.DataFrame(st.session_state.alerts[:1000])  # Augmenté à 1000 alertes
         
+        df_alerts['timestamp'] = (pd.to_datetime(df_alerts['timestamp']).dt.tz_localize('UTC').dt.tz_convert('America/Toronto'))
         df_display = pd.DataFrame({
             'Heure': df_alerts['timestamp'],
             'Ticker': df_alerts['ticker'],
