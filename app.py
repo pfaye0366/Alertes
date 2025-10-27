@@ -699,7 +699,7 @@ def main():
         
         df_alerts['timestamp'] = (pd.to_datetime(df_alerts['timestamp']).dt.tz_localize('UTC').dt.tz_convert('America/Toronto'))
         df_display = pd.DataFrame({
-            'Heure': df_alerts['timestamp'],
+            'Heure': df_alerts['timestamp'].dt.strftime('%H:%M:%S'),
             'Ticker': df_alerts['ticker'],
             'Type': df_alerts['icon'] + ' ' + df_alerts['type'],
             'Prix': df_alerts['price'].apply(lambda x: f"${x:.2f}"),
