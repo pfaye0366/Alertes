@@ -2,11 +2,11 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import time
+import os
 from datetime import datetime, timedelta
 from collections import defaultdict
 import csv
 from zoneinfo import ZoneInfo  # intégré à Python ≥3.9
-import os
 
 # Configuration de la page
 st.set_page_config(
@@ -700,18 +700,25 @@ def main():
         
         # Détecter si le script tourne dans Streamlit Cloud
         is_cloud = bool(os.environ.get("STREAMLIT_RUNTIME"))
-
+        
         # Conversion robuste en timezone de Toronto
-        df_alerts['timestamp'] = pd.to_datetime(df_alerts['timestamp'], errors='coerce')
-
+        # Spécifier le format pour éviter les warnings
+        df_alerts['timestamp'] = pd.to_datetime(
+            df_alerts['timestamp'], 
+            format='%H:%M:%S',  # Format HH:MM:SS
+            errors='coerce'
+        )
+        
         if df_alerts['timestamp'].dt.tz is None:
             # Si les timestamps n'ont pas de timezone :
             if is_cloud:
-               # En cloud : l'heure est en UTC → convertir vers Toronto
-               df_alerts['timestamp'] = (df_alerts['timestamp'].dt.tz_localize('UTC').dt.tz_convert('America/Toronto'))
+                # En cloud : l'heure est en UTC → convertir vers Toronto
+                df_alerts['timestamp'] = (df_alerts['timestamp']
+                                          .dt.tz_localize('UTC')
+                                          .dt.tz_convert('America/Toronto'))
             else:
-               # En local : on considère que l'heure est déjà locale (Toronto)
-               df_alerts['timestamp'] = df_alerts['timestamp'].dt.tz_localize('America/Toronto')
+                # En local : on considère que l'heure est déjà locale (Toronto)
+                df_alerts['timestamp'] = df_alerts['timestamp'].dt.tz_localize('America/Toronto')
         else:
             # Si déjà tz-aware, on harmonise simplement vers Toronto
             df_alerts['timestamp'] = df_alerts['timestamp'].dt.tz_convert('America/Toronto')
