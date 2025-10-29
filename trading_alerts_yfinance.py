@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import csv
 from zoneinfo import ZoneInfo  # intégré à Python ≥3.9
+import pytz # Ajout pour la conversion de timezone
 
 # Configuration de la page
 st.set_page_config(
@@ -102,8 +103,6 @@ class TradingAlertSystem:
             
             # Si mode simulation avec end_datetime, filtrer les données
             if end_datetime is not None:
-                # Convertir end_datetime en timezone America/New_York (timezone du marché US)
-                import pytz
                 
                 # Timezone du marché US
                 ny_tz = pytz.timezone('America/New_York')
@@ -116,12 +115,10 @@ class TradingAlertSystem:
                     # Convertir en timezone NY
                     end_datetime_tz = end_datetime.astimezone(ny_tz)
                 
-                # Si l'index a une timezone différente, convertir
-                if hist.index.tzinfo is not None:
-                    # S'assurer que les deux sont dans la même timezone pour la comparaison
-                    if hist.index.tzinfo != end_datetime_tz.tzinfo:
-                        # Convertir l'index dans la même timezone
-                        hist.index = hist.index.tz_convert(ny_tz)
+                # S'assurer que les deux sont dans la même timezone pour la comparaison
+                if hist.index.tzinfo != ny_tz:
+                    # Convertir l'index dans la même timezone
+                    hist.index = hist.index.tz_convert(ny_tz)
                 
                 # Filtrer pour ne garder que les données jusqu'à end_datetime_tz
                 hist = hist[hist.index <= end_datetime_tz]
@@ -703,12 +700,7 @@ def main():
     else:
         df_alerts = pd.DataFrame(st.session_state.alerts[:1000])  # Augmenté à 1000 alertes
         
-        # Détecter si le script tourne dans Streamlit Cloud
-        is_cloud = bool(os.environ.get("STREAMLIT_RUNTIME"))
-        
         # Conversion robuste en timezone de Toronto
-        # Le timestamp est déjà en format HH:MM:SS et en heure de Toronto
-        # Pas besoin de conversion complexe, juste formater pour l'affichage
         
         df_display = pd.DataFrame({
             'Heure': df_alerts['timestamp'],  # Déjà au bon format
@@ -768,6 +760,7 @@ def main():
     
     # Si le système est en cours d'exécution, scanner les tickers
     if 'running' in st.session_state and st.session_state.running:
+        
         # Attendre avant le scan SAUF au premier démarrage
         if 'first_run' not in st.session_state:
             # Premier scan, pas d'attente
@@ -780,73 +773,79 @@ def main():
             if st.session_state.simulation_time is not None:
                 st.session_state.simulation_time = st.session_state.simulation_time + timedelta(seconds=refresh_interval)
         
-        status_placeholder = st.empty()
-        
         params = st.session_state.params if 'params' in st.session_state else {}
         
         # Déterminer quelle date/heure utiliser
         if st.session_state.simulation_time is not None:
             end_datetime = st.session_state.simulation_time
             period_days = st.session_state.get('backtest_period_days', 5)
-            status_placeholder.info(f"🔄 Scan simulation... ({len(st.session_state.tickers)} tickers) - Temps: {end_datetime.strftime('%H:%M:%S')}")
+            initial_status_text = f"🔄 Scan simulation... ({len(st.session_state.tickers)} tickers) - Temps: {end_datetime.strftime('%H:%M:%S')}"
         else:
             end_datetime = None
             period_days = 1
-            status_placeholder.info(f"🔄 Scan en cours... ({len(st.session_state.tickers)} tickers)")
+            initial_status_text = f"🔄 Scan en cours... ({len(st.session_state.tickers)} tickers)"
         
-        # Scanner tous les tickers
-        for i, ticker in enumerate(st.session_state.tickers):
+        # *** DEBUT MODIFICATION: Utilisation de st.status ***
+        with st.status(initial_status_text, expanded=True) as status:
+            
+            # Scanner tous les tickers
+            for i, ticker in enumerate(st.session_state.tickers):
+                
+                # Mise à jour du statut dans st.status
+                if end_datetime:
+                    status.update(label=f"🔄 Scan simulation... {ticker} ({i+1}/{len(st.session_state.tickers)}) - {end_datetime.strftime('%H:%M:%S')}", state="running")
+                else:
+                    status.update(label=f"🔄 Scan en cours... {ticker} ({i+1}/{len(st.session_state.tickers)})", state="running")
+                
+                data = system.load_ticker_data(ticker, end_datetime, period_days)
+                
+                if data:
+                    alerts = system.detect_alerts(data, params)
+                    
+                    for alert in alerts:
+                        # Format de date complet: DDMMYYYY HH:MI
+                        # Utiliser le timestamp de la bougie, convertir en string
+                        candle_datetime_ny = data['candle_time'].tz_convert('America/New_York').strftime("%d%m%Y %H:%M")
+                        message_with_time = f"{alert['message']} [Bougie: {candle_datetime_ny} NY]"
+                        
+                        # Créer le timestamp en timezone Toronto pour l'affichage (Heure de l'alerte)
+                        toronto_tz = ZoneInfo('America/Toronto')
+                        current_time_toronto = datetime.now(toronto_tz)
+                        
+                        alert_info = {
+                            'timestamp': current_time_toronto.strftime("%H:%M:%S"),
+                            'ticker': ticker,
+                            'type': alert['type'],
+                            'severity': alert['severity'],
+                            'icon': alert['icon'],
+                            'message': message_with_time,
+                            'price': data['price'],
+                            'change': data['change'],
+                            'volume': system.format_volume(data['volume']),
+                            'avg_volume': system.format_volume(data['avg_volume']),
+                            'vwap': data['vwap'],
+                            'high': data['high'],
+                            'low': data['low']
+                        }
+                        st.session_state.alerts.insert(0, alert_info)
+                        st.session_state.alert_count += 1
+                        
+                        # Déclencher une alerte sonore si c'est une alerte ORB et que l'option est activée
+                        if 'ORB' in alert['type'] and params.get('orb_sound_alert', False):
+                            st.session_state.play_sound = True
+                    
+                    st.session_state.previous_data[ticker] = data
+            
+            # Mise à jour du message final
             if end_datetime:
-                status_placeholder.info(f"🔄 Scan simulation... {ticker} ({i+1}/{len(st.session_state.tickers)}) - {end_datetime.strftime('%H:%M:%S')}")
+                final_message = f"✅ Scan terminé! Temps simulation: {end_datetime.strftime('%H:%M:%S')} - Prochain dans {refresh_interval}s"
             else:
-                status_placeholder.info(f"🔄 Scan en cours... {ticker} ({i+1}/{len(st.session_state.tickers)})")
+                final_message = f"✅ Scan terminé! Prochain scan dans {refresh_interval} secondes..."
             
-            data = system.load_ticker_data(ticker, end_datetime, period_days)
-            
-            if data:
-                alerts = system.detect_alerts(data, params)
-                
-                for alert in alerts:
-                    # Format de date complet: DDMMYYYY HH:MI
-                    candle_datetime = data['candle_time'].strftime("%d%m%Y %H:%M")
-                    message_with_time = f"{alert['message']} [Bougie: {candle_datetime}]"
-                    
-                    # Créer le timestamp en timezone Toronto
-                    toronto_tz = ZoneInfo('America/Toronto')
-                    current_time_toronto = datetime.now(toronto_tz)
-                    
-                    alert_info = {
-                        'timestamp': current_time_toronto.strftime("%H:%M:%S"),
-                        'ticker': ticker,
-                        'type': alert['type'],
-                        'severity': alert['severity'],
-                        'icon': alert['icon'],
-                        'message': message_with_time,
-                        'price': data['price'],
-                        'change': data['change'],
-                        'volume': system.format_volume(data['volume']),
-                        'avg_volume': system.format_volume(data['avg_volume']),
-                        'vwap': data['vwap'],
-                        'high': data['high'],
-                        'low': data['low']
-                    }
-                    st.session_state.alerts.insert(0, alert_info)
-                    st.session_state.alert_count += 1
-                    
-                    # Déclencher une alerte sonore si c'est une alerte ORB et que l'option est activée
-                    if 'ORB' in alert['type'] and params.get('orb_sound_alert', False):
-                        # Marquer qu'un son doit être joué
-                        if 'play_sound' not in st.session_state:
-                            st.session_state.play_sound = False
-                        st.session_state.play_sound = True
-                
-                st.session_state.previous_data[ticker] = data
-        
-        if end_datetime:
-            status_placeholder.success(f"✅ Scan terminé! Temps simulation: {end_datetime.strftime('%H:%M:%S')} - Prochain dans {refresh_interval}s")
-        else:
-            status_placeholder.success(f"✅ Scan terminé! Prochain scan dans {refresh_interval} secondes...")
-        
+            status.update(label=final_message, state="complete", expanded=False)
+
+        # *** FIN MODIFICATION: Utilisation de st.status ***
+
         st.rerun()
 
 if __name__ == "__main__":
