@@ -641,7 +641,12 @@ def main():
             )
             params['orb_periods'] = orb_options if orb_options else [5, 15, 30]
             
+            # Option alerte sonore
+            params['orb_sound_alert'] = st.checkbox("🔊 Alerte sonore pour ORB", value=False, key='orb_sound')
+            
             st.caption("Détecte les cassures de la range d'ouverture (vert=hausse, orange=baisse)")
+            if params['orb_sound_alert']:
+                st.caption("🔊 Son activé: signal sonore lors des alertes ORB")
         
         st.session_state.params = params
         
@@ -737,6 +742,30 @@ def main():
             hide_index=True
         )
     
+    # Jouer un son si nécessaire - APRÈS l'affichage du tableau
+    if st.session_state.get('play_sound', False):
+        # Réinitialiser le flag IMMÉDIATEMENT pour éviter la répétition
+        st.session_state.play_sound = False
+        
+        # Code HTML/JavaScript pour jouer un son
+        sound_html = """
+        <audio id="alert-sound" autoplay style="display:none;">
+            <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLaiTcIGWi77eeeTRAMUKfj8LZjHAY4ktfzzHksBSR3x/DdkEAKFF606+uoVRQKRp/g8r5sIQUrgs7y2ok3CBlou+3nnk0QDFC" type="audio/wav">
+        </audio>
+        <script>
+            setTimeout(function() {
+                const audio = document.getElementById('alert-sound');
+                if (audio) {
+                    audio.volume = 0.5;
+                    audio.play().catch(function(error) {
+                        console.log('Audio playback failed:', error);
+                    });
+                }
+            }, 100);
+        </script>
+        """
+        st.markdown(sound_html, unsafe_allow_html=True)
+    
     # Si le système est en cours d'exécution, scanner les tickers
     if 'running' in st.session_state and st.session_state.running:
         # Attendre avant le scan SAUF au premier démarrage
@@ -803,6 +832,13 @@ def main():
                     }
                     st.session_state.alerts.insert(0, alert_info)
                     st.session_state.alert_count += 1
+                    
+                    # Déclencher une alerte sonore si c'est une alerte ORB et que l'option est activée
+                    if 'ORB' in alert['type'] and params.get('orb_sound_alert', False):
+                        # Marquer qu'un son doit être joué
+                        if 'play_sound' not in st.session_state:
+                            st.session_state.play_sound = False
+                        st.session_state.play_sound = True
                 
                 st.session_state.previous_data[ticker] = data
         
